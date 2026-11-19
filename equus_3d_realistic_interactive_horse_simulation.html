@@ -1,0 +1,1925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equus 3D — Realistic Interactive Equine Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,600&display=swap" rel="stylesheet">
+    <!-- Three.js r128 + OrbitControls + GLTFLoader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0b0f17;
+            font-family: 'Inter', sans-serif;
+            color: #f3f4f6;
+        }
+        #canvas-container {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            outline: none;
+        }
+        .glass-panel {
+            background: rgba(15, 20, 30, 0.72);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+        }
+        .glass-pill {
+            background: rgba(25, 32, 46, 0.78);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .glass-pill:hover {
+            background: rgba(45, 58, 82, 0.85);
+            border-color: rgba(245, 158, 11, 0.45);
+            transform: translateY(-1px);
+        }
+        .glass-pill.active {
+            background: linear-gradient(135deg, rgba(217, 119, 6, 0.9), rgba(180, 83, 9, 0.95));
+            border-color: rgba(251, 191, 36, 0.8);
+            box-shadow: 0 0 18px rgba(217, 119, 6, 0.45);
+            color: #fff;
+        }
+        .serif-title {
+            font-family: 'Playfair Display', serif;
+        }
+        /* Custom Range Slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.16);
+            border-radius: 999px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #f59e0b;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5px;
+            box-shadow: 0 0 10px rgba(245, 158, 11, 0.8);
+            border: 2px solid #fff;
+        }
+        .coat-swatch {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .coat-swatch:hover {
+            transform: scale(1.12);
+        }
+        .coat-swatch.active {
+            transform: scale(1.16);
+            box-shadow: 0 0 0 2px #0f172a, 0 0 0 4px #f59e0b;
+        }
+        /* Scrollbar for side panel on small screens */
+        .custom-scroll::-webkit-scrollbar {
+            width: 5px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.9; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+        .click-ripple {
+            position: fixed;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid #fbbf24;
+            pointer-events: none;
+            z-index: 50;
+            animation: pulse-ring 0.65s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Viewport Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Floating Anatomy / Interaction Toast -->
+    <div id="interaction-toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-2">
+        <div class="glass-panel px-4 py-2 rounded-full flex items-center gap-2.5 text-xs font-medium text-amber-200 border border-amber-500/40">
+            <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+            <span id="toast-text">Touched: Neck & Crest — Horse responds!</span>
+        </div>
+    </div>
+
+    <!-- Top Header Bar -->
+    <header class="fixed top-0 left-0 right-0 z-20 p-3 sm:p-5 flex flex-wrap items-center justify-between gap-3 pointer-events-none">
+        <!-- Brand / Status -->
+        <div class="glass-panel px-4 py-2.5 rounded-2xl flex items-center gap-3.5 pointer-events-auto">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-600/30">
+                <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 3h-3.2c-.7 0-1.4.3-1.8.8L11.5 7H7c-2.2 0-4 1.8-4 4v5c0 1.1.9 2 2 2h1v3c0 .6.4 1 1 1s1-.4 1-1v-4h5l2.2 3.4c.3.4.8.6 1.3.6.8 0 1.5-.7 1.5-1.5v-5.8l2.6-3.7c.3-.4.4-.9.4-1.4V4c0-.6-.4-1-1-1zm-1 3.5L15.5 10H13l1.8-3.5L16.5 4H18v2.5z"/>
+                </svg>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="serif-title text-base sm:text-lg font-semibold tracking-wide text-white leading-none">Equus 3D</h1>
+                    <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">Biomechanical</span>
+                </div>
+                <p class="text-[11px] text-slate-300 mt-0.5 hidden sm:block">Click on the horse to pet & inspect anatomy • Drag to orbit</p>
+            </div>
+        </div>
+
+        <!-- Telemetry & Quick Mode Switcher -->
+        <div class="flex items-center gap-2 pointer-events-auto">
+            <!-- Model Mode Toggle -->
+            <div class="glass-panel p-1 rounded-xl flex items-center gap-1 text-xs">
+                <button id="btn-mode-procedural" onclick="setModelType('procedural')" class="px-3 py-1.5 rounded-lg font-medium transition-all bg-amber-600 text-white shadow">
+                    Articulated Rig
+                </button>
+                <button id="btn-mode-gltf" onclick="setModelType('gltf')" class="px-3 py-1.5 rounded-lg font-medium transition-all text-slate-300 hover:text-white">
+                    Morph Mesh
+                </button>
+            </div>
+
+            <!-- Live Stats Pill -->
+            <div class="glass-panel px-3.5 py-2 rounded-xl hidden md:flex items-center gap-4 text-xs">
+                <div>
+                    <span class="text-slate-400 block text-[10px] uppercase">Stride Speed</span>
+                    <span id="stat-speed" class="font-semibold text-amber-400">0.0 km/h</span>
+                </div>
+                <div class="h-6 w-px bg-white/10"></div>
+                <div>
+                    <span class="text-slate-400 block text-[10px] uppercase">Heart Rate</span>
+                    <span id="stat-bpm" class="font-semibold text-rose-400">38 BPM</span>
+                </div>
+                <div class="h-6 w-px bg-white/10"></div>
+                <div>
+                    <span class="text-slate-400 block text-[10px] uppercase">FPS</span>
+                    <span id="stat-fps" class="font-semibold text-emerald-400">60</span>
+                </div>
+            </div>
+
+            <!-- Toggle Right Inspector Panel on Mobile -->
+            <button id="toggle-ui-btn" onclick="toggleControlPanel()" class="glass-panel p-2.5 rounded-xl text-slate-200 hover:text-amber-400 transition-colors" title="Toggle Controls">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Right Control Panel -->
+    <aside id="control-panel" class="fixed top-20 right-3 sm:right-5 bottom-24 sm:bottom-6 w-72 sm:w-80 z-20 glass-panel rounded-2xl p-4 flex flex-col gap-4 overflow-y-auto custom-scroll transition-transform duration-300">
+        
+        <!-- Coat genetics selector -->
+        <div>
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold uppercase tracking-wider text-slate-300">Equine Coat & Breed</span>
+                <span id="coat-name-label" class="text-xs font-medium text-amber-400">Blood Bay</span>
+            </div>
+            <div class="grid grid-cols-6 gap-2 py-1">
+                <button onclick="applyCoat('bay')" id="swatch-bay" class="coat-swatch active w-9 h-9 rounded-full border border-white/20 relative overflow-hidden" style="background: linear-gradient(135deg, #8c3819 65%, #181311 65%);" title="Blood Bay"></button>
+                <button onclick="applyCoat('friesian')" id="swatch-friesian" class="coat-swatch w-9 h-9 rounded-full border border-white/20" style="background: linear-gradient(135deg, #1b1c20 65%, #090a0c 65%);" title="Black Friesian"></button>
+                <button onclick="applyCoat('palomino')" id="swatch-palomino" class="coat-swatch w-9 h-9 rounded-full border border-white/20" style="background: linear-gradient(135deg, #d79c46 65%, #f5f2eb 65%);" title="Golden Palomino"></button>
+                <button onclick="applyCoat('dapple')" id="swatch-dapple" class="coat-swatch w-9 h-9 rounded-full border border-white/20" style="background: radial-gradient(circle at 35% 35%, #f3f4f6, #9ca3af 65%, #4b5563);" title="Andalusian Dapple Grey"></button>
+                <button onclick="applyCoat('chestnut')" id="swatch-chestnut" class="coat-swatch w-9 h-9 rounded-full border border-white/20" style="background: linear-gradient(135deg, #a64b24 65%, #6e2d11 65%);" title="Red Chestnut"></button>
+                <button onclick="applyCoat('buckskin')" id="swatch-buckskin" class="coat-swatch w-9 h-9 rounded-full border border-white/20" style="background: linear-gradient(135deg, #c79c5e 65%, #1c1613 65%);" title="Buckskin Lusitano"></button>
+            </div>
+        </div>
+
+        <div class="h-px bg-white/10"></div>
+
+        <!-- Locomotion & Fine Controls -->
+        <div class="space-y-3">
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-300 font-medium">Animation Tempo</span>
+                    <span id="speed-val" class="text-amber-400 font-mono">1.00x</span>
+                </div>
+                <input id="slider-speed" type="range" min="0.1" max="2.2" step="0.05" value="1.0" oninput="updateSimParams()">
+            </div>
+
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-300 font-medium">Neck Arch & Turn</span>
+                    <span id="neck-val" class="text-amber-400 font-mono">0°</span>
+                </div>
+                <input id="slider-neck" type="range" min="-40" max="40" step="1" value="0" oninput="updateSimParams()">
+            </div>
+
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-300 font-medium">Coat Groom Sheen</span>
+                    <span id="sheen-val" class="text-amber-400 font-mono">75%</span>
+                </div>
+                <input id="slider-sheen" type="range" min="0" max="100" step="1" value="75" oninput="updateSimParams()">
+            </div>
+
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-300 font-medium">Meadow Wind Force</span>
+                    <span id="wind-val" class="text-amber-400 font-mono">50%</span>
+                </div>
+                <input id="slider-wind" type="range" min="0" max="100" step="1" value="50" oninput="updateSimParams()">
+            </div>
+        </div>
+
+        <div class="h-px bg-white/10"></div>
+
+        <!-- Environment & Time of Day -->
+        <div>
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-300 block mb-2">Lighting & Atmosphere</span>
+            <div class="grid grid-cols-2 gap-1.5 text-xs">
+                <button onclick="setEnvironment('golden')" id="env-golden" class="glass-pill active px-2.5 py-2 rounded-xl flex items-center gap-2 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Golden Hour
+                </button>
+                <button onclick="setEnvironment('pasture')" id="env-pasture" class="glass-pill px-2.5 py-2 rounded-xl flex items-center gap-2 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span> Sunny Meadow
+                </button>
+                <button onclick="setEnvironment('moonlight')" id="env-moonlight" class="glass-pill px-2.5 py-2 rounded-xl flex items-center gap-2 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-indigo-400"></span> Moonlight
+                </button>
+                <button onclick="setEnvironment('studio')" id="env-studio" class="glass-pill px-2.5 py-2 rounded-xl flex items-center gap-2 font-medium">
+                    <span class="w-2.5 h-2.5 rounded-full bg-slate-200"></span> Studio Arena
+                </button>
+            </div>
+        </div>
+
+        <div class="h-px bg-white/10"></div>
+
+        <!-- Camera Angles -->
+        <div>
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-300 block mb-2">Camera Presets</span>
+            <div class="grid grid-cols-2 gap-1.5 text-xs">
+                <button onclick="setCameraPreset('orbit')" id="cam-orbit" class="glass-pill active px-2.5 py-1.5 rounded-xl font-medium">Free Orbit</button>
+                <button onclick="setCameraPreset('profile')" id="cam-profile" class="glass-pill px-2.5 py-1.5 rounded-xl font-medium">Side Profile</button>
+                <button onclick="setCameraPreset('cinematic')" id="cam-cinematic" class="glass-pill px-2.5 py-1.5 rounded-xl font-medium">Low Hero Cam</button>
+                <button onclick="setCameraPreset('portrait')" id="cam-portrait" class="glass-pill px-2.5 py-1.5 rounded-xl font-medium">Head Close-up</button>
+            </div>
+        </div>
+
+        <div class="h-px bg-white/10"></div>
+
+        <!-- Anatomical & Interactive Actions -->
+        <div>
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-300 block mb-2">Anatomy & Actions</span>
+            <div class="flex flex-col gap-1.5 text-xs">
+                <button onclick="toggleAnatomyView()" id="btn-xray" class="glass-pill px-3 py-2 rounded-xl flex items-center justify-between font-medium">
+                    <span>Skeletal Joint Overlay</span>
+                    <span id="xray-badge" class="px-2 py-0.5 rounded bg-white/10 text-[10px]">OFF</span>
+                </button>
+                <button onclick="triggerWhinnyShake()" class="glass-pill px-3 py-2 rounded-xl flex items-center justify-between font-medium">
+                    <span>Trigger Head Shake / Neigh</span>
+                    <span class="text-amber-400">⚡</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Bottom Gait & Action Bar -->
+    <nav class="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 max-w-[96vw] overflow-x-auto">
+        <div class="glass-panel p-1.5 rounded-2xl flex items-center gap-1.5">
+            <button onclick="setGait('idle')" id="gait-idle" class="glass-pill px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>🧍</span> Idle Stand
+            </button>
+            <button onclick="setGait('graze')" id="gait-graze" class="glass-pill px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>🌿</span> Graze
+            </button>
+            <button onclick="setGait('walk')" id="gait-walk" class="glass-pill px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>🚶</span> 4-Beat Walk
+            </button>
+            <button onclick="setGait('trot')" id="gait-trot" class="glass-pill active px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>🐎</span> Collected Trot
+            </button>
+            <button onclick="setGait('gallop')" id="gait-gallop" class="glass-pill px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>💨</span> Full Gallop
+            </button>
+            <button onclick="setGait('rear')" id="gait-rear" class="glass-pill px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                <span>🔥</span> Rear Up
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        // ============================================================================
+        // EQUUS 3D - REALISTIC ARTICULATED EQUINE ENGINE & SCENE CONTROLLER
+        // ============================================================================
+
+        let scene, camera, renderer, controls, clock;
+        let skyMesh, groundMesh, grassInstancedMesh, grassDummy;
+        let sunLight, hemiLight, fillLight, rimLight;
+        let dustSystem, dustPositions, dustVelocities;
+
+        // Horse Rig Hierarchy & Parts
+        let proceduralHorseRoot;
+        let horseRig = {};
+        let jointMarkersGroup;
+        let maneStrands = [];
+        let tailStrands = [];
+        let InteractiveMeshes = [];
+
+        // Official GLTF Morph Target Horse (Secondary toggle mode)
+        let gltfHorseMesh = null;
+        let gltfMixer = null;
+        let activeModelType = 'procedural'; // 'procedural' or 'gltf'
+
+        // Simulation State
+        const simState = {
+            gait: 'trot',           // 'idle', 'graze', 'walk', 'trot', 'gallop', 'rear'
+            speedMultiplier: 1.0,
+            neckTurnDeg: 0,
+            coatSheen: 0.75,
+            windForce: 0.5,
+            phase: 0,
+            time: 0,
+            rearTimer: 0,
+            shakeTimer: 0,
+            petReactionTimer: 0,
+            petTargetZone: '',
+            blinkTimer: 0,
+            isBlinking: false,
+            earTwitchTime: 0,
+            anatomyXray: false,
+            cameraMode: 'orbit',
+            coatKey: 'bay',
+            envKey: 'golden',
+            // Smooth blended gait weights
+            blend: {
+                idle: 0,
+                graze: 0,
+                walk: 0,
+                trot: 1,
+                gallop: 0,
+                rear: 0
+            }
+        };
+
+        // Materials Library
+        let materials = {};
+        let coatTextures = {};
+
+        // Coat Definitions
+        const COAT_PRESETS = {
+            bay: {
+                name: 'Blood Bay',
+                bodyColor: '#8d3618',
+                dappleColor: '#69240d',
+                pointsColor: '#141110', // Lower legs / socks
+                maneColor: '#110f0e',
+                muzzleColor: '#261f1d',
+                hoofColor: '#1d1916',
+                blaze: true
+            },
+            friesian: {
+                name: 'Black Friesian',
+                bodyColor: '#16181c',
+                dappleColor: '#0e1013',
+                pointsColor: '#0d0e11',
+                maneColor: '#090a0c',
+                muzzleColor: '#121317',
+                hoofColor: '#111214',
+                blaze: false
+            },
+            palomino: {
+                name: 'Golden Palomino',
+                bodyColor: '#d49842',
+                dappleColor: '#b87d2b',
+                pointsColor: '#c98e3a',
+                maneColor: '#f5f0e6',
+                muzzleColor: '#5c4938',
+                hoofColor: '#8c765c',
+                blaze: true
+            },
+            dapple: {
+                name: 'Andalusian Dapple Grey',
+                bodyColor: '#c7ccd1',
+                dappleColor: '#6d737a',
+                pointsColor: '#4c5157',
+                maneColor: '#e5e7eb',
+                muzzleColor: '#373b40',
+                hoofColor: '#2b2d30',
+                blaze: false,
+                heavyDapples: true
+            },
+            chestnut: {
+                name: 'Red Chestnut',
+                bodyColor: '#a3441d',
+                dappleColor: '#7d2f10',
+                pointsColor: '#8f3916',
+                maneColor: '#632309',
+                muzzleColor: '#452418',
+                hoofColor: '#36271c',
+                blaze: true
+            },
+            buckskin: {
+                name: 'Buckskin Lusitano',
+                bodyColor: '#c79b59',
+                dappleColor: '#a67b3d',
+                pointsColor: '#1a1512',
+                maneColor: '#120f0d',
+                muzzleColor: '#261f1a',
+                hoofColor: '#1c1714',
+                blaze: false
+            }
+        };
+
+        // Environment Presets
+        const ENV_PRESETS = {
+            golden: {
+                skyTop: '#1e2b4d',
+                skyHorizon: '#e88548',
+                fogColor: '#d48755',
+                sunColor: '#ffae52',
+                sunIntensity: 2.3,
+                sunPos: [35, 18, 28],
+                hemiSky: '#ffd39b',
+                hemiGround: '#3d3122',
+                hemiIntensity: 0.75,
+                grassColor: '#4b612c'
+            },
+            pasture: {
+                skyTop: '#2469b3',
+                skyHorizon: '#a8d5ff',
+                fogColor: '#9bc9f5',
+                sunColor: '#fffdf2',
+                sunIntensity: 2.1,
+                sunPos: [25, 45, 25],
+                hemiSky: '#d9eeff',
+                hemiGround: '#3b5228',
+                hemiIntensity: 0.85,
+                grassColor: '#48732c'
+            },
+            moonlight: {
+                skyTop: '#060a14',
+                skyHorizon: '#162747',
+                fogColor: '#101d36',
+                sunColor: '#8ab4ff',
+                sunIntensity: 1.35,
+                sunPos: [-30, 35, -20],
+                hemiSky: '#3b5998',
+                hemiGround: '#101726',
+                hemiIntensity: 0.5,
+                grassColor: '#1c2e24'
+            },
+            studio: {
+                skyTop: '#11151f',
+                skyHorizon: '#232a3b',
+                fogColor: '#1c2230',
+                sunColor: '#ffffff',
+                sunIntensity: 2.2,
+                sunPos: [18, 35, 22],
+                hemiSky: '#e2e8f0',
+                hemiGround: '#1e293b',
+                hemiIntensity: 0.7,
+                grassColor: '#2c3531'
+            }
+        };
+
+        // FPS Counter tracking
+        let frameCount = 0;
+        let lastFpsUpdate = 0;
+
+        // Raycasting for interactive petting / anatomy click
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        let pointerDownPos = { x: 0, y: 0 };
+
+        // ============================================================================
+        // 1. PROCEDURAL COAT & NORMAL TEXTURE GENERATOR
+        // ============================================================================
+        function generateCoatTexture(coatPreset, isPoints = false) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            // Base Coat Fill
+            ctx.fillStyle = isPoints ? coatPreset.pointsColor : coatPreset.bodyColor;
+            ctx.fillRect(0, 0, 512, 512);
+
+            // Subtle Dapples / Muscle Shading variation
+            if (!isPoints) {
+                const dappleCount = coatPreset.heavyDapples ? 190 : 45;
+                for (let i = 0; i < dappleCount; i++) {
+                    const x = Math.random() * 512;
+                    const y = Math.random() * 512;
+                    const r = 10 + Math.random() * 24;
+                    const grad = ctx.createRadialGradient(x, y, 2, x, y, r);
+                    grad.addColorStop(0, coatPreset.bodyColor);
+                    grad.addColorStop(0.65, coatPreset.dappleColor);
+                    grad.addColorStop(1, 'transparent');
+                    ctx.globalAlpha = coatPreset.heavyDapples ? 0.35 : 0.14;
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(x, y, r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Fine Fur Hair Directional Brushing Streaks
+            ctx.globalAlpha = 0.08;
+            for (let i = 0; i < 4500; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 512;
+                const len = 6 + Math.random() * 14;
+                ctx.strokeStyle = (i % 2 === 0) ? '#ffffff' : '#000000';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + len, y + (Math.random() - 0.5) * 3);
+                ctx.stroke();
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(2, 2);
+            return tex;
+        }
+
+        function generateFurNormalMap() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgb(128, 128, 255)';
+            ctx.fillRect(0, 0, 256, 256);
+
+            for (let i = 0; i < 3500; i++) {
+                const x = Math.random() * 256;
+                const y = Math.random() * 256;
+                const nx = 115 + Math.floor(Math.random() * 26);
+                const ny = 115 + Math.floor(Math.random() * 26);
+                ctx.strokeStyle = `rgb(${nx}, ${ny}, 255)`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + 8, y + 1);
+                ctx.stroke();
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(4, 4);
+            return tex;
+        }
+
+        // ============================================================================
+        // 2. INITIALIZATION & SCENE SETUP
+        // ============================================================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+            clock = new THREE.Clock();
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0xd48755, 0.012);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 300);
+            camera.position.set(4.6, 2.2, 4.4);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
+            container.appendChild(renderer.domElement);
+
+            // OrbitControls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(0, 1.35, 0);
+            controls.minDistance = 1.5;
+            controls.maxDistance = 16;
+            controls.maxPolarAngle = Math.PI / 2 - 0.03;
+
+            // Lights
+            setupLighting();
+
+            // Sky Dome & Meadow Ground + Wind-blown Grass + Hoof Dust
+            setupEnvironment();
+
+            // Initialize Materials
+            initHorseMaterials();
+
+            // Build Procedural Anatomical Articulated Horse
+            buildProceduralHorse();
+
+            // Preload Official Three.js GLTF Horse Model in background for dual-mode toggle
+            loadOfficialGLTFHorse();
+
+            // Apply initial coat & environment
+            applyCoat('bay');
+            setEnvironment('golden');
+
+            // Events
+            window.addEventListener('resize', onWindowResize);
+            renderer.domElement.addEventListener('pointerdown', onPointerDown);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+            // Start Animation Loop
+            animate();
+        }
+
+        function setupLighting() {
+            hemiLight = new THREE.HemisphereLight(0xffd39b, 0x3d3122, 0.75);
+            hemiLight.position.set(0, 25, 0);
+            scene.add(hemiLight);
+
+            sunLight = new THREE.DirectionalLight(0xffae52, 2.3);
+            sunLight.position.set(35, 18, 28);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 2048;
+            sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.camera.near = 10;
+            sunLight.shadow.camera.far = 90;
+            const d = 4.5;
+            sunLight.shadow.camera.left = -d;
+            sunLight.shadow.camera.right = d;
+            sunLight.shadow.camera.top = d;
+            sunLight.shadow.camera.bottom = -d;
+            sunLight.shadow.bias = -0.0005;
+            scene.add(sunLight);
+
+            // Rim / Backlight to highlight horse muscular silhouette & mane
+            rimLight = new THREE.DirectionalLight(0xffe4b5, 0.9);
+            rimLight.position.set(-20, 12, -18);
+            scene.add(rimLight);
+
+            // Soft fill light from front-left
+            fillLight = new THREE.DirectionalLight(0x9cb8e8, 0.4);
+            fillLight.position.set(-12, 6, 15);
+            scene.add(fillLight);
+        }
+
+        function setupEnvironment() {
+            // 1. Gradient Sky Dome Shader
+            const skyGeo = new THREE.SphereGeometry(140, 32, 24);
+            const skyMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    topColor: { value: new THREE.Color('#1e2b4d') },
+                    bottomColor: { value: new THREE.Color('#e88548') },
+                    offset: { value: 10 },
+                    exponent: { value: 0.55 }
+                },
+                vertexShader: `
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+                        vWorldPosition = worldPosition.xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 topColor;
+                    uniform vec3 bottomColor;
+                    uniform float offset;
+                    uniform float exponent;
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        float h = normalize( vWorldPosition + offset ).y;
+                        gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h, 0.0 ), exponent ), 0.0 ) ), 1.0 );
+                    }
+                `,
+                side: THREE.BackSide
+            });
+            skyMesh = new THREE.Mesh(skyGeo, skyMat);
+            scene.add(skyMesh);
+
+            // 2. Ground Plane with Radial Turf Texture
+            const groundCanvas = document.createElement('canvas');
+            groundCanvas.width = 512;
+            groundCanvas.height = 512;
+            const gCtx = groundCanvas.getContext('2d');
+            gCtx.fillStyle = '#384a22';
+            gCtx.fillRect(0, 0, 512, 512);
+            for (let i = 0; i < 6000; i++) {
+                gCtx.fillStyle = i % 2 === 0 ? '#45592b' : '#2a3818';
+                gCtx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+            }
+            const groundTex = new THREE.CanvasTexture(groundCanvas);
+            groundTex.wrapS = THREE.RepeatWrapping;
+            groundTex.wrapT = THREE.RepeatWrapping;
+            groundTex.repeat.set(35, 35);
+
+            const groundGeo = new THREE.CircleGeometry(90, 64);
+            const groundMat = new THREE.MeshStandardMaterial({
+                map: groundTex,
+                roughness: 0.92,
+                metalness: 0.02
+            });
+            groundMesh = new THREE.Mesh(groundGeo, groundMat);
+            groundMesh.rotation.x = -Math.PI / 2;
+            groundMesh.receiveShadow = true;
+            scene.add(groundMesh);
+
+            // 3. Instanced Meadow Grass Blades (Animated in loop)
+            const bladeCount = 3200;
+            const bladeGeo = new THREE.ConeGeometry(0.028, 0.24, 3);
+            bladeGeo.translate(0, 0.12, 0);
+            const bladeMat = new THREE.MeshStandardMaterial({
+                color: 0x4b612c,
+                roughness: 0.75
+            });
+            grassInstancedMesh = new THREE.InstancedMesh(bladeGeo, bladeMat, bladeCount);
+            grassInstancedMesh.receiveShadow = true;
+
+            grassDummy = new THREE.Object3D();
+            grassInstancedMesh.userData.blades = [];
+            for (let i = 0; i < bladeCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 0.6 + Math.pow(Math.random(), 0.7) * 16;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+                const scaleY = 0.6 + Math.random() * 1.1;
+                const rotY = Math.random() * Math.PI;
+                grassInstancedMesh.userData.blades.push({ x, z, scaleY, rotY, phase: Math.random() * Math.PI * 2 });
+                grassDummy.position.set(x, 0, z);
+                grassDummy.rotation.set(0, rotY, 0);
+                grassDummy.scale.set(1, scaleY, 1);
+                grassDummy.updateMatrix();
+                grassInstancedMesh.setMatrixAt(i, grassDummy.matrix);
+            }
+            scene.add(grassInstancedMesh);
+
+            // 4. White Paddock Fence Ring in Background for depth reference
+            const fenceGroup = new THREE.Group();
+            const fenceMat = new THREE.MeshStandardMaterial({ color: 0x6e5034, roughness: 0.85 });
+            const postCount = 28;
+            const fenceRadius = 15.5;
+            for (let i = 0; i < postCount; i++) {
+                const a1 = (i / postCount) * Math.PI * 2;
+                const a2 = ((i + 1) / postCount) * Math.PI * 2;
+                const x1 = Math.cos(a1) * fenceRadius;
+                const z1 = Math.sin(a1) * fenceRadius;
+                const x2 = Math.cos(a2) * fenceRadius;
+                const z2 = Math.sin(a2) * fenceRadius;
+
+                const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 1.35, 8), fenceMat);
+                post.position.set(x1, 0.67, z1);
+                post.castShadow = true;
+                fenceGroup.add(post);
+
+                // Rails
+                const dist = Math.hypot(x2 - x1, z2 - z1);
+                for (let r = 0; r < 2; r++) {
+                    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, dist), fenceMat);
+                    rail.position.set((x1 + x2) / 2, 0.55 + r * 0.48, (z1 + z2) / 2);
+                    rail.lookAt(x2, 0.55 + r * 0.48, z2);
+                    fenceGroup.add(rail);
+                }
+            }
+            scene.add(fenceGroup);
+
+            // 5. Hoof Dust Particle System
+            const particleCount = 120;
+            const pGeo = new THREE.BufferGeometry();
+            dustPositions = new Float32Array(particleCount * 3);
+            dustVelocities = [];
+            for (let i = 0; i < particleCount; i++) {
+                dustPositions[i * 3] = (Math.random() - 0.5) * 2;
+                dustPositions[i * 3 + 1] = -5; // Hidden below ground until kicked up
+                dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 3;
+                dustVelocities.push({
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: 0.4 + Math.random() * 0.8,
+                    vz: -1.5 - Math.random() * 2.0,
+                    life: 0
+                });
+            }
+            pGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+
+            // Soft circular dust sprite
+            const pCanvas = document.createElement('canvas');
+            pCanvas.width = 64;
+            pCanvas.height = 64;
+            const pCtx = pCanvas.getContext('2d');
+            const grad = pCtx.createRadialGradient(32, 32, 2, 32, 32, 30);
+            grad.addColorStop(0, 'rgba(225, 200, 170, 0.65)');
+            grad.addColorStop(1, 'rgba(225, 200, 170, 0)');
+            pCtx.fillStyle = grad;
+            pCtx.fillRect(0, 0, 64, 64);
+
+            const pMat = new THREE.PointsMaterial({
+                size: 0.42,
+                map: new THREE.CanvasTexture(pCanvas),
+                transparent: true,
+                depthWrite: false,
+                opacity: 0.75
+            });
+            dustSystem = new THREE.Points(pGeo, pMat);
+            scene.add(dustSystem);
+        }
+
+        // ============================================================================
+        // 3. ANATOMICAL PROCEDURAL 3D HORSE BUILDER
+        // ============================================================================
+        function initHorseMaterials() {
+            const normalMap = generateFurNormalMap();
+            const preset = COAT_PRESETS.bay;
+
+            materials.coat = new THREE.MeshPhysicalMaterial({
+                map: generateCoatTexture(preset, false),
+                normalMap: normalMap,
+                normalScale: new THREE.Vector2(0.28, 0.28),
+                roughness: 0.42,
+                metalness: 0.05,
+                clearcoat: 0.45,
+                clearcoatRoughness: 0.35
+            });
+
+            materials.points = new THREE.MeshPhysicalMaterial({
+                map: generateCoatTexture(preset, true),
+                normalMap: normalMap,
+                normalScale: new THREE.Vector2(0.25, 0.25),
+                roughness: 0.48,
+                metalness: 0.05,
+                clearcoat: 0.3
+            });
+
+            materials.muzzle = new THREE.MeshStandardMaterial({
+                color: preset.muzzleColor,
+                roughness: 0.65,
+                metalness: 0.05
+            });
+
+            materials.hair = new THREE.MeshStandardMaterial({
+                color: preset.maneColor,
+                roughness: 0.55,
+                metalness: 0.1
+            });
+
+            materials.hoof = new THREE.MeshPhysicalMaterial({
+                color: preset.hoofColor,
+                roughness: 0.25,
+                metalness: 0.1,
+                clearcoat: 0.8
+            });
+
+            materials.eye = new THREE.MeshPhysicalMaterial({
+                color: 0x160d08,
+                roughness: 0.05,
+                metalness: 0.1,
+                clearcoat: 1.0
+            });
+
+            materials.blaze = new THREE.MeshStandardMaterial({
+                color: 0xf9fafb,
+                roughness: 0.6
+            });
+        }
+
+        // Helper: Create tapered anatomical limb or torso segment with rounded caps
+        function createSculptedLimb(rTop, rBottom, length, mat, radSeg = 20) {
+            const group = new THREE.Group();
+            const cylGeo = new THREE.CylinderGeometry(rTop, rBottom, length, radSeg, 8);
+            cylGeo.translate(0, -length / 2, 0);
+            const cyl = new THREE.Mesh(cylGeo, mat);
+            cyl.castShadow = true;
+            cyl.receiveShadow = true;
+            group.add(cyl);
+
+            const topCap = new THREE.Mesh(new THREE.SphereGeometry(rTop, radSeg, 12), mat);
+            topCap.castShadow = true;
+            group.add(topCap);
+
+            const botCap = new THREE.Mesh(new THREE.SphereGeometry(rBottom, radSeg, 12), mat);
+            botCap.position.y = -length;
+            botCap.castShadow = true;
+            group.add(botCap);
+
+            return { group, meshes: [cyl, topCap, botCap] };
+        }
+
+        function registerInteractive(meshOrGroup, zoneName) {
+            meshOrGroup.traverse((child) => {
+                if (child.isMesh) {
+                    child.userData.zone = zoneName;
+                    InteractiveMeshes.push(child);
+                }
+            });
+        }
+
+        function buildProceduralHorse() {
+            proceduralHorseRoot = new THREE.Group();
+            scene.add(proceduralHorseRoot);
+
+            // Pelvis / Root Spine Pivot (center of gravity at y = 1.38m)
+            const rootPivot = new THREE.Group();
+            rootPivot.position.set(0, 1.38, 0);
+            proceduralHorseRoot.add(rootPivot);
+            horseRig.root = rootPivot;
+
+            // ----------------------------------------------------------------
+            // 1. TORSO: Barrel (Ribcage), Chest (Pectorals), Loin, Croup (Hindquarters)
+            // ----------------------------------------------------------------
+            const torsoGroup = new THREE.Group();
+            rootPivot.add(torsoGroup);
+            horseRig.torso = torsoGroup;
+
+            // Ribcage / Barrel
+            const barrelGeo = new THREE.SphereGeometry(1, 32, 24);
+            barrelGeo.scale(0.35, 0.40, 0.68);
+            const barrelMesh = new THREE.Mesh(barrelGeo, materials.coat);
+            barrelMesh.position.set(0, 0.02, 0.02);
+            barrelMesh.castShadow = true;
+            barrelMesh.receiveShadow = true;
+            torsoGroup.add(barrelMesh);
+            horseRig.barrelMesh = barrelMesh;
+
+            // Muscular Chest / Pectorals (Front)
+            const chestGeo = new THREE.SphereGeometry(1, 28, 22);
+            chestGeo.scale(0.32, 0.37, 0.38);
+            const chestMesh = new THREE.Mesh(chestGeo, materials.coat);
+            chestMesh.position.set(0, 0.02, 0.54);
+            chestMesh.castShadow = true;
+            chestMesh.receiveShadow = true;
+            torsoGroup.add(chestMesh);
+
+            // Shoulder Scapula Muscles (Left & Right muscular definition)
+            [-1, 1].forEach(side => {
+                const scapulaGeo = new THREE.SphereGeometry(1, 20, 16);
+                scapulaGeo.scale(0.14, 0.34, 0.25);
+                const scapula = new THREE.Mesh(scapulaGeo, materials.coat);
+                scapula.position.set(side * 0.23, 0.08, 0.56);
+                scapula.rotation.z = side * -0.18;
+                scapula.rotation.x = 0.32;
+                scapula.castShadow = true;
+                torsoGroup.add(scapula);
+            });
+
+            // Withers (Top ridge between shoulder blades)
+            const withersGeo = new THREE.SphereGeometry(1, 20, 16);
+            withersGeo.scale(0.18, 0.22, 0.34);
+            const withers = new THREE.Mesh(withersGeo, materials.coat);
+            withers.position.set(0, 0.31, 0.48);
+            withers.castShadow = true;
+            torsoGroup.add(withers);
+
+            // Hindquarters / Croup / Pelvis
+            const croupGeo = new THREE.SphereGeometry(1, 28, 22);
+            croupGeo.scale(0.34, 0.37, 0.42);
+            const croupMesh = new THREE.Mesh(croupGeo, materials.coat);
+            croupMesh.position.set(0, 0.06, -0.58);
+            croupMesh.castShadow = true;
+            croupMesh.receiveShadow = true;
+            torsoGroup.add(croupMesh);
+
+            // Hind Haunch Muscles (Left & Right Gluteals)
+            [-1, 1].forEach(side => {
+                const haunchGeo = new THREE.SphereGeometry(1, 20, 16);
+                haunchGeo.scale(0.16, 0.35, 0.28);
+                const haunch = new THREE.Mesh(haunchGeo, materials.coat);
+                haunch.position.set(side * 0.23, -0.02, -0.62);
+                haunch.castShadow = true;
+                torsoGroup.add(haunch);
+            });
+
+            registerInteractive(torsoGroup, 'Torso, Barrel & Withers');
+
+            // ----------------------------------------------------------------
+            // 2. NECK, MANE, HEAD, EARS, EYES & MUZZLE
+            // ----------------------------------------------------------------
+            const neckBasePivot = new THREE.Group();
+            neckBasePivot.position.set(0, 0.22, 0.66);
+            neckBasePivot.rotation.x = 0.58; // Natural elevated neck posture
+            torsoGroup.add(neckBasePivot);
+            horseRig.neckBase = neckBasePivot;
+
+            // Lower/Mid Neck sculpted muscular arch
+            const neckLen = 0.74;
+            const neckCylGeo = new THREE.CylinderGeometry(0.155, 0.255, neckLen, 24, 8);
+            neckCylGeo.scale(0.76, 1, 1.18); // Laterally compressed like a real horse neck
+            neckCylGeo.translate(0, neckLen / 2, 0);
+            const neckMesh = new THREE.Mesh(neckCylGeo, materials.coat);
+            neckMesh.castShadow = true;
+            neckMesh.receiveShadow = true;
+            neckBasePivot.add(neckMesh);
+
+            // Neck Crest Muscle (Top arch of neck)
+            const crestGeo = new THREE.SphereGeometry(1, 20, 16);
+            crestGeo.scale(0.11, 0.40, 0.16);
+            const crestMesh = new THREE.Mesh(crestGeo, materials.coat);
+            crestMesh.position.set(0, neckLen * 0.52, -0.06);
+            crestMesh.rotation.x = -0.12;
+            crestMesh.castShadow = true;
+            neckBasePivot.add(crestMesh);
+
+            // Flowing Mane Strands along the Neck Crest
+            const maneCount = 18;
+            for (let i = 0; i < maneCount; i++) {
+                const t = i / (maneCount - 1);
+                const strandPivot = new THREE.Group();
+                strandPivot.position.set(0.05, t * (neckLen * 0.96), -0.11 - Math.sin(t * Math.PI) * 0.04);
+                neckBasePivot.add(strandPivot);
+
+                const sGeo = new THREE.ConeGeometry(0.032, 0.28 + Math.sin(t * Math.PI) * 0.12, 6);
+                sGeo.scale(0.4, 1, 1.3);
+                sGeo.translate(0, -0.14, 0);
+                const sMesh = new THREE.Mesh(sGeo, materials.hair);
+                sMesh.rotation.z = 0.38;
+                sMesh.rotation.x = -0.35;
+                sMesh.castShadow = true;
+                strandPivot.add(sMesh);
+                maneStrands.push({ pivot: strandPivot, baseRotZ: 0.38, index: i });
+            }
+
+            // Head / Poll Pivot
+            const headPivot = new THREE.Group();
+            headPivot.position.set(0, neckLen - 0.02, 0.05);
+            headPivot.rotation.x = -0.62;
+            neckBasePivot.add(headPivot);
+            horseRig.head = headPivot;
+
+            // Upper Cranium & Cheekbones (Jowls)
+            const craniumGeo = new THREE.SphereGeometry(0.165, 24, 18);
+            craniumGeo.scale(0.84, 0.92, 1.15);
+            const cranium = new THREE.Mesh(craniumGeo, materials.coat);
+            cranium.position.set(0, 0.02, 0.08);
+            cranium.castShadow = true;
+            headPivot.add(cranium);
+
+            // Left & Right Muscular Jowls (Cheeks)
+            [-1, 1].forEach(side => {
+                const jowlGeo = new THREE.SphereGeometry(0.115, 18, 14);
+                jowlGeo.scale(0.55, 0.95, 1.05);
+                const jowl = new THREE.Mesh(jowlGeo, materials.coat);
+                jowl.position.set(side * 0.085, -0.03, 0.08);
+                jowl.castShadow = true;
+                headPivot.add(jowl);
+            });
+
+            // Nasal Bridge (Tapering from forehead to muzzle)
+            const bridgeLen = 0.38;
+            const bridgeGeo = new THREE.CylinderGeometry(0.082, 0.135, bridgeLen, 20);
+            bridgeGeo.scale(0.82, 1, 0.96);
+            const bridgeMesh = new THREE.Mesh(bridgeGeo, materials.coat);
+            bridgeMesh.rotation.x = Math.PI / 2 + 0.38;
+            bridgeMesh.position.set(0, -0.05, 0.25);
+            bridgeMesh.castShadow = true;
+            headPivot.add(bridgeMesh);
+
+            // White Facial Blaze Strip along Nasal Bridge
+            const blazeGeo = new THREE.BoxGeometry(0.045, 0.015, 0.34);
+            const blazeMesh = new THREE.Mesh(blazeGeo, materials.blaze);
+            blazeMesh.position.set(0, 0.025, 0.25);
+            blazeMesh.rotation.x = 0.38;
+            headPivot.add(blazeMesh);
+            horseRig.blazeMesh = blazeMesh;
+
+            // Soft Velvety Muzzle & Chin
+            const muzzleGeo = new THREE.SphereGeometry(0.092, 22, 18);
+            muzzleGeo.scale(0.88, 0.82, 1.15);
+            const muzzleMesh = new THREE.Mesh(muzzleGeo, materials.muzzle);
+            muzzleMesh.position.set(0, -0.125, 0.42);
+            muzzleMesh.castShadow = true;
+            headPivot.add(muzzleMesh);
+
+            // Flared Nostrils
+            [-1, 1].forEach(side => {
+                const nostrilRing = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.024, 0.009, 10, 16),
+                    materials.muzzle
+                );
+                nostrilRing.position.set(side * 0.055, -0.10, 0.475);
+                nostrilRing.rotation.y = side * 0.6;
+                nostrilRing.rotation.x = -0.3;
+                headPivot.add(nostrilRing);
+
+                const nostrilCavity = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.02, 10, 10),
+                    new THREE.MeshBasicMaterial({ color: 0x090707 })
+                );
+                nostrilCavity.position.set(side * 0.052, -0.10, 0.47);
+                headPivot.add(nostrilCavity);
+            });
+
+            // Expressive Eyes with Eyelids (for realistic blinking)
+            horseRig.eyelids = [];
+            [-1, 1].forEach(side => {
+                const eyeGroup = new THREE.Group();
+                eyeGroup.position.set(side * 0.122, 0.05, 0.155);
+                headPivot.add(eyeGroup);
+
+                const eyeball = new THREE.Mesh(new THREE.SphereGeometry(0.028, 16, 16), materials.eye);
+                eyeGroup.add(eyeball);
+
+                // Brow Ridge
+                const brow = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), materials.coat);
+                brow.scale.set(0.8, 0.45, 1.2);
+                brow.position.set(0, 0.022, 0);
+                eyeGroup.add(brow);
+
+                // Blinking Eyelid
+                const lid = new THREE.Mesh(new THREE.SphereGeometry(0.030, 12, 12), materials.muzzle);
+                lid.scale.set(1, 0.1, 1);
+                lid.visible = false;
+                eyeGroup.add(lid);
+                horseRig.eyelids.push(lid);
+            });
+
+            // Forelock (Hair tuft between ears)
+            const forelockGeo = new THREE.ConeGeometry(0.045, 0.22, 8);
+            forelockGeo.translate(0, -0.11, 0);
+            const forelock = new THREE.Mesh(forelockGeo, materials.hair);
+            forelock.position.set(0, 0.15, 0.11);
+            forelock.rotation.x = 0.65;
+            headPivot.add(forelock);
+
+            // Articulated Ears (Left & Right)
+            horseRig.ears = [];
+            [-1, 1].forEach(side => {
+                const earPivot = new THREE.Group();
+                earPivot.position.set(side * 0.085, 0.145, 0.04);
+                earPivot.rotation.z = side * -0.24;
+                earPivot.rotation.x = 0.22;
+                headPivot.add(earPivot);
+
+                const earOuter = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.036, 0.15, 12),
+                    materials.coat
+                );
+                earOuter.scale.set(0.75, 1, 1.1);
+                earOuter.position.y = 0.075;
+                earOuter.castShadow = true;
+                earPivot.add(earOuter);
+
+                const earInner = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.022, 0.11, 10),
+                    materials.muzzle
+                );
+                earInner.position.set(0, 0.07, 0.01);
+                earPivot.add(earInner);
+
+                horseRig.ears.push({ pivot: earPivot, side });
+            });
+
+            registerInteractive(neckBasePivot, 'Neck, Crest & Head');
+
+            // ----------------------------------------------------------------
+            // 3. FLOWING MULTI-STRAND ARTICULATED TAIL
+            // ----------------------------------------------------------------
+            const tailBasePivot = new THREE.Group();
+            tailBasePivot.position.set(0, 0.22, -0.94);
+            tailBasePivot.rotation.x = -0.35;
+            torsoGroup.add(tailBasePivot);
+            horseRig.tailBase = tailBasePivot;
+
+            // Dock / Upper Tail
+            const dockGeo = new THREE.CylinderGeometry(0.055, 0.075, 0.34, 14);
+            dockGeo.translate(0, -0.17, 0);
+            const dockMesh = new THREE.Mesh(dockGeo, materials.hair);
+            dockMesh.castShadow = true;
+            tailBasePivot.add(dockMesh);
+
+            // Mid & Lower Flowing Plume
+            const tailMidPivot = new THREE.Group();
+            tailMidPivot.position.set(0, -0.28, 0);
+            tailBasePivot.add(tailMidPivot);
+            horseRig.tailMid = tailMidPivot;
+
+            for (let i = 0; i < 9; i++) {
+                const angle = (i / 9) * Math.PI * 2;
+                const plumeGeo = new THREE.ConeGeometry(0.065, 0.78, 8);
+                plumeGeo.translate(Math.cos(angle) * 0.02, -0.38, Math.sin(angle) * 0.02);
+                const plume = new THREE.Mesh(plumeGeo, materials.hair);
+                plume.rotation.x = 0.12 + (i % 3) * 0.04;
+                plume.rotation.z = (i - 4) * 0.035;
+                plume.castShadow = true;
+                tailMidPivot.add(plume);
+                tailStrands.push(plume);
+            }
+            registerInteractive(tailBasePivot, 'Tail & Croup');
+
+            // ----------------------------------------------------------------
+            // 4. FOUR ARTICULATED ANATOMICAL LEGS (Shoulder/Hip -> Knee/Hock -> Fetlock -> Hoof)
+            // ----------------------------------------------------------------
+            horseRig.legs = {
+                FL: buildFrontLeg(-1), // Front Left
+                FR: buildFrontLeg(1),  // Front Right
+                BL: buildHindLeg(-1),  // Back Left
+                BR: buildHindLeg(1)    // Back Right
+            };
+
+            torsoGroup.add(horseRig.legs.FL.root);
+            torsoGroup.add(horseRig.legs.FR.root);
+            torsoGroup.add(horseRig.legs.BL.root);
+            torsoGroup.add(horseRig.legs.BR.root);
+
+            // ----------------------------------------------------------------
+            // 5. ANATOMICAL X-RAY SKELETAL JOINT MARKERS OVERLAY
+            // ----------------------------------------------------------------
+            buildJointMarkersOverlay();
+        }
+
+        function buildFrontLeg(side) {
+            // side: -1 = Left, +1 = Right
+            const shoulderPivot = new THREE.Group();
+            shoulderPivot.position.set(side * 0.21, -0.08, 0.58);
+
+            // Upper Forearm (Radius/Humerus)
+            const upperLen = 0.52;
+            const upper = createSculptedLimb(0.115, 0.072, upperLen, materials.coat);
+            shoulderPivot.add(upper.group);
+
+            // Knee Joint (Carpus)
+            const kneePivot = new THREE.Group();
+            kneePivot.position.set(0, -upperLen, 0);
+            shoulderPivot.add(kneePivot);
+
+            // Cannon Bone (Lower leg - uses dark "points" material)
+            const cannonLen = 0.46;
+            const cannon = createSculptedLimb(0.064, 0.050, cannonLen, materials.points);
+            kneePivot.add(cannon.group);
+
+            // Fetlock & Pastern Pivot
+            const fetlockPivot = new THREE.Group();
+            fetlockPivot.position.set(0, -cannonLen, 0);
+            fetlockPivot.rotation.x = -0.25; // Natural pastern angle forward
+            kneePivot.add(fetlockPivot);
+
+            const pasternLen = 0.14;
+            const pastern = createSculptedLimb(0.052, 0.056, pasternLen, materials.points);
+            fetlockPivot.add(pastern.group);
+
+            // Sculpted Hoof
+            const hoofGeo = new THREE.CylinderGeometry(0.056, 0.076, 0.11, 18);
+            hoofGeo.translate(0, -0.055, 0.018);
+            const hoofMesh = new THREE.Mesh(hoofGeo, materials.hoof);
+            hoofMesh.position.set(0, -pasternLen, 0);
+            hoofMesh.rotation.x = 0.25; // Level with ground
+            hoofMesh.castShadow = true;
+            hoofMesh.receiveShadow = true;
+            fetlockPivot.add(hoofMesh);
+
+            registerInteractive(shoulderPivot, side < 0 ? 'Left Foreleg' : 'Right Foreleg');
+
+            return {
+                root: shoulderPivot,
+                upper: shoulderPivot,
+                knee: kneePivot,
+                fetlock: fetlockPivot,
+                hoof: hoofMesh
+            };
+        }
+
+        function buildHindLeg(side) {
+            // Hind legs feature angled femur/stifle -> hock joint -> cannon -> fetlock -> hoof
+            const hipPivot = new THREE.Group();
+            hipPivot.position.set(side * 0.22, -0.04, -0.64);
+
+            // Upper Thigh / Gaskin
+            const thighLen = 0.56;
+            const thigh = createSculptedLimb(0.145, 0.080, thighLen, materials.coat);
+            thigh.group.rotation.x = 0.24; // Angled backward toward hock
+            hipPivot.add(thigh.group);
+
+            // Hock Joint (Tarsus - characteristic backward angle of equine hind leg)
+            const hockPivot = new THREE.Group();
+            hockPivot.position.set(0, -Math.cos(0.24) * thighLen, -Math.sin(0.24) * thighLen);
+            hipPivot.add(hockPivot);
+
+            // Hind Cannon Bone
+            const cannonLen = 0.47;
+            const cannon = createSculptedLimb(0.068, 0.050, cannonLen, materials.points);
+            hockPivot.add(cannon.group);
+
+            // Hind Fetlock & Pastern
+            const fetlockPivot = new THREE.Group();
+            fetlockPivot.position.set(0, -cannonLen, 0);
+            fetlockPivot.rotation.x = -0.25;
+            hockPivot.add(fetlockPivot);
+
+            const pasternLen = 0.14;
+            const pastern = createSculptedLimb(0.052, 0.056, pasternLen, materials.points);
+            fetlockPivot.add(pastern.group);
+
+            // Hind Hoof
+            const hoofGeo = new THREE.CylinderGeometry(0.056, 0.075, 0.11, 18);
+            hoofGeo.translate(0, -0.055, 0.018);
+            const hoofMesh = new THREE.Mesh(hoofGeo, materials.hoof);
+            hoofMesh.position.set(0, -pasternLen, 0);
+            hoofMesh.rotation.x = 0.25;
+            hoofMesh.castShadow = true;
+            hoofMesh.receiveShadow = true;
+            fetlockPivot.add(hoofMesh);
+
+            registerInteractive(hipPivot, side < 0 ? 'Left Hindquarter & Hock' : 'Right Hindquarter & Hock');
+
+            return {
+                root: hipPivot,
+                upper: hipPivot,
+                knee: hockPivot,
+                fetlock: fetlockPivot,
+                hoof: hoofMesh
+            };
+        }
+
+        function buildJointMarkersOverlay() {
+            jointMarkersGroup = new THREE.Group();
+            jointMarkersGroup.visible = false;
+            scene.add(jointMarkersGroup);
+
+            const markerMat = new THREE.MeshBasicMaterial({
+                color: 0x38bdf8,
+                depthTest: false,
+                transparent: true,
+                opacity: 0.9
+            });
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0xf59e0b,
+                depthTest: false,
+                side: THREE.DoubleSide
+            });
+
+            const trackedNodes = [
+                horseRig.neckBase,
+                horseRig.head,
+                horseRig.tailBase,
+                horseRig.legs.FL.upper, horseRig.legs.FL.knee, horseRig.legs.FL.fetlock,
+                horseRig.legs.FR.upper, horseRig.legs.FR.knee, horseRig.legs.FR.fetlock,
+                horseRig.legs.BL.upper, horseRig.legs.BL.knee, horseRig.legs.BL.fetlock,
+                horseRig.legs.BR.upper, horseRig.legs.BR.knee, horseRig.legs.BR.fetlock
+            ];
+
+            jointMarkersGroup.userData.pairs = trackedNodes.map(node => {
+                const mGroup = new THREE.Group();
+                const dot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 12), markerMat);
+                const ring = new THREE.Mesh(new THREE.RingGeometry(0.048, 0.06, 16), ringMat);
+                mGroup.add(dot);
+                mGroup.add(ring);
+                jointMarkersGroup.add(mGroup);
+                return { node, marker: mGroup };
+            });
+        }
+
+        // ============================================================================
+        // 4. OFFICIAL THREE.JS GLTF MORPH-TARGET HORSE LOADER (SECONDARY OPTION)
+        // ============================================================================
+        function loadOfficialGLTFHorse() {
+            if (!THREE.GLTFLoader) return;
+            const loader = new THREE.GLTFLoader();
+            loader.load(
+                'https://threejs.org/examples/models/gltf/Horse.glb',
+                (gltf) => {
+                    gltfHorseMesh = gltf.scene.children[0];
+                    gltfHorseMesh.scale.set(0.0115, 0.0115, 0.0115);
+                    gltfHorseMesh.castShadow = true;
+                    gltfHorseMesh.receiveShadow = true;
+                    gltfHorseMesh.visible = (activeModelType === 'gltf');
+                    scene.add(gltfHorseMesh);
+
+                    gltfMixer = new THREE.AnimationMixer(gltfHorseMesh);
+                    gltfMixer.clipAction(gltf.animations[0]).setDuration(1).play();
+                },
+                undefined,
+                () => {
+                    // Fallback gracefully to procedural horse if external URL is blocked
+                    console.log('External GLB not needed; Procedural Articulated Horse active.');
+                }
+            );
+        }
+
+        function setModelType(type) {
+            activeModelType = type;
+            const btnProc = document.getElementById('btn-mode-procedural');
+            const btnGltf = document.getElementById('btn-mode-gltf');
+
+            if (type === 'gltf' && gltfHorseMesh) {
+                proceduralHorseRoot.visible = false;
+                gltfHorseMesh.visible = true;
+                btnGltf.className = 'px-3 py-1.5 rounded-lg font-medium transition-all bg-amber-600 text-white shadow';
+                btnProc.className = 'px-3 py-1.5 rounded-lg font-medium transition-all text-slate-300 hover:text-white';
+                showInteractionToast('Switched to Classic Three.js Morph-Target Mesh');
+            } else {
+                activeModelType = 'procedural';
+                proceduralHorseRoot.visible = true;
+                if (gltfHorseMesh) gltfHorseMesh.visible = false;
+                btnProc.className = 'px-3 py-1.5 rounded-lg font-medium transition-all bg-amber-600 text-white shadow';
+                btnGltf.className = 'px-3 py-1.5 rounded-lg font-medium transition-all text-slate-300 hover:text-white';
+                if (type === 'gltf' && !gltfHorseMesh) {
+                    showInteractionToast('Using High-Detail Procedural Articulated Rig');
+                }
+            }
+        }
+
+        // ============================================================================
+        // 5. BIOMECHANICAL GAIT KINEMATICS & ANIMATION SOLVER
+        // ============================================================================
+        function solveLegKinematics(leg, cyclePhase, strideAmp, kneeFlexAmp, isHind, weight) {
+            const p = cyclePhase;
+            // Forward/Backward swing of Shoulder or Hip
+            const swing = Math.sin(p) * strideAmp * weight;
+            // Lift happens when leg swings forward (cos(p) > 0)
+            const liftPhase = Math.max(0, Math.cos(p));
+            const kneeBend = Math.pow(liftPhase, 1.4) * kneeFlexAmp * weight;
+
+            if (!isHind) {
+                // Foreleg: Knee bends backward (positive X rotation in our local space)
+                leg.upper.rotation.x = -swing;
+                leg.knee.rotation.x = kneeBend;
+                leg.fetlock.rotation.x = -0.25 - kneeBend * 0.45 + Math.sin(p) * 0.15 * weight;
+            } else {
+                // Hindleg: Hock flexes during lift
+                leg.upper.rotation.x = -swing * 0.9;
+                leg.knee.rotation.x = -kneeBend * 0.85;
+                leg.fetlock.rotation.x = -0.25 + kneeBend * 0.55;
+            }
+        }
+
+        function updateHorseBiometrics(dt) {
+            simState.time += dt;
+
+            // Smooth blend weights toward active gait
+            const targetGait = simState.gait;
+            const blendSpeed = dt * 4.5;
+            Object.keys(simState.blend).forEach(k => {
+                const target = (k === targetGait) ? 1 : 0;
+                simState.blend[k] += (target - simState.blend[k]) * Math.min(1, blendSpeed);
+            });
+
+            const b = simState.blend;
+            const speedMult = simState.speedMultiplier;
+
+            // Advance locomotion phase
+            const cycleFreq = (
+                b.walk * 3.4 +
+                b.trot * 6.5 +
+                b.gallop * 9.8 +
+                b.rear * 4.0
+            ) * speedMult;
+            simState.phase += dt * cycleFreq;
+            const P = simState.phase;
+
+            // 1. Breathing Ribcage Expansion
+            const breathRate = 1.8 + b.trot * 2.5 + b.gallop * 5.0;
+            const breathAmp = 0.012 + b.gallop * 0.015;
+            const breathScale = 1 + Math.sin(simState.time * breathRate) * breathAmp;
+            horseRig.barrelMesh.scale.set(0.35 * breathScale, 0.40 * breathScale, 0.68);
+
+            // 2. Torso Suspension Bounce & Pitch
+            const walkBounce = Math.sin(P * 2) * 0.022 * b.walk;
+            const trotBounce = Math.abs(Math.sin(P)) * 0.065 * b.trot;
+            const gallopBounce = Math.sin(P) * 0.095 * b.gallop;
+            const rearHeight = b.rear * 0.44;
+
+            horseRig.root.position.y = 1.38 + walkBounce + trotBounce + gallopBounce + rearHeight;
+
+            // Torso Pitch (Rocking during gallop or rearing up on hind legs)
+            const gallopPitch = Math.cos(P) * 0.14 * b.gallop;
+            const trotPitch = Math.sin(P * 2) * 0.025 * b.trot;
+            const rearPitch = -0.82 * b.rear; // Rear up!
+            horseRig.torso.rotation.x = gallopPitch + trotPitch + rearPitch;
+            horseRig.torso.rotation.z = Math.cos(P) * 0.022 * (b.walk + b.trot);
+
+            // 3. Neck & Head Posture (Idle looking, Grazing down, Gallop extension, User slider, Pet reaction)
+            const userNeckYaw = THREE.MathUtils.degToRad(simState.neckTurnDeg);
+            const idleLookYaw = Math.sin(simState.time * 0.7) * 0.12 * b.idle;
+
+            const neckNod = (
+                Math.sin(P * 2) * 0.08 * b.walk +
+                Math.sin(P * 2) * 0.11 * b.trot +
+                Math.sin(P - 0.6) * 0.22 * b.gallop
+            );
+            const grazeNeckDrop = 1.15 * b.graze; // Lower neck to meadow grass
+            const rearNeckArch = -0.35 * b.rear;
+
+            // Interactive Petting / Head Shake reaction
+            let reactionPitch = 0;
+            let reactionRoll = 0;
+            if (simState.shakeTimer > 0) {
+                simState.shakeTimer = Math.max(0, simState.shakeTimer - dt);
+                reactionRoll = Math.sin(simState.time * 28) * 0.28 * simState.shakeTimer;
+                reactionPitch = Math.cos(simState.time * 16) * 0.14 * simState.shakeTimer;
+            }
+
+            horseRig.neckBase.rotation.x = 0.58 + neckNod + grazeNeckDrop + rearNeckArch + reactionPitch;
+            horseRig.neckBase.rotation.y = userNeckYaw + idleLookYaw;
+
+            // Head compensation & grazing chewing motion
+            const grazeHeadAngle = -0.35 * b.graze + Math.sin(simState.time * 6.0) * 0.06 * b.graze;
+            horseRig.head.rotation.x = -0.62 - neckNod * 0.55 + grazeHeadAngle;
+            horseRig.head.rotation.z = reactionRoll;
+
+            // 4. Four-Limb Gait Phase Offsets
+            // Walk: 4-beat (0, PI, PI/2, 3PI/2)
+            // Trot: 2-beat diagonal pairs (FL+BR together at 0, FR+BL together at PI)
+            // Gallop: 4-beat asymmetric suspension
+            const moveWeight = Math.min(1, b.walk + b.trot + b.gallop);
+
+            if (b.rear > 0.05) {
+                // Rear Up Kinematics: Hind legs plant and support, front legs paw the air
+                const rW = b.rear;
+                const pawL = Math.sin(simState.time * 7.5) * 0.45;
+                const pawR = Math.cos(simState.time * 7.5) * 0.45;
+
+                horseRig.legs.FL.upper.rotation.x = (-0.65 + pawL) * rW;
+                horseRig.legs.FL.knee.rotation.x = (1.15 - pawL * 0.5) * rW;
+                horseRig.legs.FR.upper.rotation.x = (-0.65 + pawR) * rW;
+                horseRig.legs.FR.knee.rotation.x = (1.15 - pawR * 0.5) * rW;
+
+                horseRig.legs.BL.upper.rotation.x = 0.58 * rW;
+                horseRig.legs.BL.knee.rotation.x = -0.25 * rW;
+                horseRig.legs.BR.upper.rotation.x = 0.58 * rW;
+                horseRig.legs.BR.knee.rotation.x = -0.25 * rW;
+            } else if (moveWeight > 0.01) {
+                // Blend phase offsets between Walk, Trot, and Gallop
+                const strideAmp = b.walk * 0.36 + b.trot * 0.52 + b.gallop * 0.78;
+                const kneeAmp = b.walk * 0.55 + b.trot * 0.95 + b.gallop * 1.25;
+
+                // Diagonal / rotary phase calculation
+                const flPhase = P;
+                const frPhase = P + (b.walk * Math.PI + b.trot * Math.PI + b.gallop * 0.85);
+                const blPhase = P + (b.walk * Math.PI * 1.5 + b.trot * Math.PI + b.gallop * 3.4);
+                const brPhase = P + (b.walk * Math.PI * 0.5 + b.trot * 0 + b.gallop * 4.1);
+
+                solveLegKinematics(horseRig.legs.FL, flPhase, strideAmp, kneeAmp, false, moveWeight);
+                solveLegKinematics(horseRig.legs.FR, frPhase, strideAmp, kneeAmp, false, moveWeight);
+                solveLegKinematics(horseRig.legs.BL, blPhase, strideAmp, kneeAmp, true, moveWeight);
+                solveLegKinematics(horseRig.legs.BR, brPhase, strideAmp, kneeAmp, true, moveWeight);
+            } else {
+                // Idle / Graze stance with gentle weight shifting
+                const shift = Math.sin(simState.time * 0.9) * 0.03;
+                horseRig.legs.FL.upper.rotation.x = shift;
+                horseRig.legs.FL.knee.rotation.x = 0;
+                horseRig.legs.FR.upper.rotation.x = -shift;
+                horseRig.legs.FR.knee.rotation.x = 0;
+                horseRig.legs.BL.upper.rotation.x = 0.04;
+                horseRig.legs.BL.knee.rotation.x = -0.05;
+                horseRig.legs.BR.upper.rotation.x = 0;
+                horseRig.legs.BR.knee.rotation.x = 0;
+            }
+
+            // 5. Flowing Mane & Tail Secondary Physics
+            const wind = simState.windForce;
+            const speedLift = b.trot * 0.35 + b.gallop * 0.78;
+            horseRig.tailBase.rotation.x = -0.35 - speedLift - wind * 0.25 + Math.sin(P) * 0.14 * moveWeight;
+            horseRig.tailBase.rotation.z = Math.sin(simState.time * 2.2) * (0.14 + wind * 0.18);
+            horseRig.tailMid.rotation.z = Math.cos(simState.time * 2.2 - 0.8) * (0.22 + wind * 0.25);
+            horseRig.tailMid.rotation.x = Math.sin(P - 1.0) * 0.22 * moveWeight;
+
+            maneStrands.forEach(s => {
+                const wave = Math.sin(simState.time * 4.5 + s.index * 0.45);
+                s.pivot.rotation.z = wave * (0.08 + wind * 0.25 + speedLift * 0.25);
+                s.pivot.rotation.x = speedLift * 0.25;
+            });
+
+            // 6. Ear Twitching & Eye Blinking
+            horseRig.ears.forEach(ear => {
+                const earWave = Math.sin(simState.time * 2.3 + ear.side * 1.5);
+                const alertBack = (b.gallop + b.rear) * -0.45;
+                ear.pivot.rotation.x = 0.22 + alertBack + (earWave > 0.85 ? 0.28 : 0);
+            });
+
+            simState.blinkTimer += dt;
+            if (simState.blinkTimer > 3.6) {
+                horseRig.eyelids.forEach(l => l.visible = true);
+                if (simState.blinkTimer > 3.76) {
+                    horseRig.eyelids.forEach(l => l.visible = false);
+                    simState.blinkTimer = Math.random() * 1.2;
+                }
+            }
+
+            // 7. Update Official GLTF Horse Mixer if visible
+            if (gltfMixer && activeModelType === 'gltf') {
+                const gltfSpeed = (0.2 + b.walk * 0.4 + b.trot * 0.85 + b.gallop * 1.45) * speedMult;
+                gltfMixer.update(dt * gltfSpeed);
+            }
+        }
+
+        // ============================================================================
+        // 6. ENVIRONMENT ANIMATION (GRASS WIND & HOOF DUST)
+        // ============================================================================
+        function updateEnvironmentEffects(dt) {
+            const b = simState.blend;
+            const groundScrollSpeed = (b.walk * 1.4 + b.trot * 3.8 + b.gallop * 7.8) * simState.speedMultiplier;
+
+            // Scroll ground turf texture backward when horse is moving
+            if (groundMesh.material.map) {
+                groundMesh.material.map.offset.y -= dt * groundScrollSpeed * 0.22;
+            }
+
+            // Animate Instanced Meadow Grass Blades (scroll + wind sway)
+            const blades = grassInstancedMesh.userData.blades;
+            const wind = simState.windForce;
+            for (let i = 0; i < blades.length; i++) {
+                const bl = blades[i];
+                bl.z -= dt * groundScrollSpeed;
+                if (bl.z < -16) bl.z += 32;
+
+                const sway = Math.sin(simState.time * (2.5 + wind * 3.0) + bl.phase) * (0.08 + wind * 0.35);
+                grassDummy.position.set(bl.x, 0, bl.z);
+                grassDummy.rotation.set(sway, bl.rotY, sway * 0.5);
+                grassDummy.scale.set(1, bl.scaleY, 1);
+                grassDummy.updateMatrix();
+                grassInstancedMesh.setMatrixAt(i, grassDummy.matrix);
+            }
+            grassInstancedMesh.instanceMatrix.needsUpdate = true;
+
+            // Animate Hoof Dust Particles during Trot / Gallop
+            const dustIntensity = b.trot * 0.45 + b.gallop * 1.0;
+            const posArr = dustSystem.geometry.attributes.position.array;
+            for (let i = 0; i < dustVelocities.length; i++) {
+                const v = dustVelocities[i];
+                if (v.life > 0) {
+                    v.life -= dt;
+                    posArr[i * 3] += v.vx * dt;
+                    posArr[i * 3 + 1] += v.vy * dt;
+                    posArr[i * 3 + 2] += v.vz * dt * simState.speedMultiplier;
+                    if (v.life <= 0) {
+                        posArr[i * 3 + 1] = -5;
+                    }
+                } else if (dustIntensity > 0.1 && Math.random() < dustIntensity * 0.25) {
+                    // Spawn particle near one of the 4 hooves
+                    const legSide = (i % 2 === 0 ? -0.22 : 0.22);
+                    const legFrontBack = (i % 4 < 2 ? 0.55 : -0.65);
+                    posArr[i * 3] = legSide + (Math.random() - 0.5) * 0.18;
+                    posArr[i * 3 + 1] = 0.05 + Math.random() * 0.1;
+                    posArr[i * 3 + 2] = legFrontBack;
+                    v.life = 0.45 + Math.random() * 0.55;
+                }
+            }
+            dustSystem.geometry.attributes.position.needsUpdate = true;
+
+            // Sync Anatomical Joint Markers if enabled
+            if (jointMarkersGroup && jointMarkersGroup.visible) {
+                const worldPos = new THREE.Vector3();
+                jointMarkersGroup.userData.pairs.forEach(pair => {
+                    pair.node.getWorldPosition(worldPos);
+                    pair.marker.position.copy(worldPos);
+                    pair.marker.lookAt(camera.position);
+                });
+            }
+        }
+
+        // ============================================================================
+        // 7. UI & INTERACTIVE CONTROLS HANDLERS
+        // ============================================================================
+        function setGait(gaitKey) {
+            simState.gait = gaitKey;
+            ['idle', 'graze', 'walk', 'trot', 'gallop', 'rear'].forEach(k => {
+                const btn = document.getElementById('gait-' + k);
+                if (btn) btn.classList.toggle('active', k === gaitKey);
+            });
+            updateLiveTelemetry();
+        }
+
+        function applyCoat(coatKey) {
+            const preset = COAT_PRESETS[coatKey];
+            if (!preset) return;
+            simState.coatKey = coatKey;
+
+            document.getElementById('coat-name-label').textContent = preset.name;
+            Object.keys(COAT_PRESETS).forEach(k => {
+                const sw = document.getElementById('swatch-' + k);
+                if (sw) sw.classList.toggle('active', k === coatKey);
+            });
+
+            // Regenerate procedural coat & points textures
+            materials.coat.map = generateCoatTexture(preset, false);
+            materials.coat.needsUpdate = true;
+
+            materials.points.map = generateCoatTexture(preset, true);
+            materials.points.needsUpdate = true;
+
+            materials.muzzle.color.set(preset.muzzleColor);
+            materials.hair.color.set(preset.maneColor);
+            materials.hoof.color.set(preset.hoofColor);
+
+            if (horseRig.blazeMesh) {
+                horseRig.blazeMesh.visible = !!preset.blaze;
+            }
+        }
+
+        function setEnvironment(envKey) {
+            const env = ENV_PRESETS[envKey];
+            if (!env) return;
+            simState.envKey = envKey;
+
+            ['golden', 'pasture', 'moonlight', 'studio'].forEach(k => {
+                const btn = document.getElementById('env-' + k);
+                if (btn) btn.classList.toggle('active', k === envKey);
+            });
+
+            skyMesh.material.uniforms.topColor.value.set(env.skyTop);
+            skyMesh.material.uniforms.bottomColor.value.set(env.skyHorizon);
+            scene.fog.color.set(env.fogColor);
+
+            sunLight.color.set(env.sunColor);
+            sunLight.intensity = env.sunIntensity;
+            sunLight.position.set(...env.sunPos);
+
+            hemiLight.color.set(env.hemiSky);
+            hemiLight.groundColor.set(env.hemiGround);
+            hemiLight.intensity = env.hemiIntensity;
+
+            grassInstancedMesh.material.color.set(env.grassColor);
+        }
+
+        function setCameraPreset(preset) {
+            simState.cameraMode = preset;
+            ['orbit', 'profile', 'cinematic', 'portrait'].forEach(k => {
+                const btn = document.getElementById('cam-' + k);
+                if (btn) btn.classList.toggle('active', k === preset);
+            });
+
+            if (preset === 'profile') {
+                camera.position.set(4.8, 1.55, 0.0);
+                controls.target.set(0, 1.35, 0);
+            } else if (preset === 'cinematic') {
+                camera.position.set(3.2, 0.65, 3.6);
+                controls.target.set(0, 1.45, 0.2);
+            } else if (preset === 'portrait') {
+                camera.position.set(1.65, 2.05, 1.95);
+                controls.target.set(0, 1.85, 0.95);
+            } else {
+                camera.position.set(4.6, 2.2, 4.4);
+                controls.target.set(0, 1.35, 0);
+            }
+            controls.update();
+        }
+
+        function updateSimParams() {
+            const speed = parseFloat(document.getElementById('slider-speed').value);
+            const neck = parseFloat(document.getElementById('slider-neck').value);
+            const sheen = parseFloat(document.getElementById('slider-sheen').value);
+            const wind = parseFloat(document.getElementById('slider-wind').value);
+
+            simState.speedMultiplier = speed;
+            simState.neckTurnDeg = neck;
+            simState.coatSheen = sheen / 100;
+            simState.windForce = wind / 100;
+
+            document.getElementById('speed-val').textContent = speed.toFixed(2) + 'x';
+            document.getElementById('neck-val').textContent = (neck > 0 ? '+' : '') + neck + '°';
+            document.getElementById('sheen-val').textContent = sheen + '%';
+            document.getElementById('wind-val').textContent = wind + '%';
+
+            // Update PBR Clearcoat Sheen & Roughness dynamically
+            materials.coat.clearcoat = simState.coatSheen * 0.85;
+            materials.coat.roughness = 0.62 - simState.coatSheen * 0.35;
+            updateLiveTelemetry();
+        }
+
+        function updateLiveTelemetry() {
+            const baseSpeeds = { idle: 0, graze: 0.4, walk: 6.5, trot: 14.5, gallop: 44.0, rear: 0 };
+            const baseBpm = { idle: 36, graze: 34, walk: 52, trot: 95, gallop: 165, rear: 120 };
+
+            const kmh = (baseSpeeds[simState.gait] * simState.speedMultiplier).toFixed(1);
+            const bpm = Math.round(baseBpm[simState.gait] * (0.85 + simState.speedMultiplier * 0.15));
+
+            document.getElementById('stat-speed').textContent = kmh + ' km/h';
+            document.getElementById('stat-bpm').textContent = bpm + ' BPM';
+        }
+
+        function toggleAnatomyView() {
+            simState.anatomyXray = !simState.anatomyXray;
+            jointMarkersGroup.visible = simState.anatomyXray;
+
+            const badge = document.getElementById('xray-badge');
+            const btn = document.getElementById('btn-xray');
+            if (simState.anatomyXray) {
+                badge.textContent = 'ON';
+                badge.className = 'px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[10px]';
+                btn.classList.add('active');
+                showInteractionToast('Anatomical Joint Pivot Overlay Active');
+            } else {
+                badge.textContent = 'OFF';
+                badge.className = 'px-2 py-0.5 rounded bg-white/10 text-[10px]';
+                btn.classList.remove('active');
+            }
+        }
+
+        function triggerWhinnyShake() {
+            simState.shakeTimer = 1.2;
+            showInteractionToast('Horse shakes head & nickers affectionately!');
+        }
+
+        function toggleControlPanel() {
+            const panel = document.getElementById('control-panel');
+            if (panel.classList.contains('translate-x-[120%]')) {
+                panel.classList.remove('translate-x-[120%]');
+            } else {
+                panel.classList.add('translate-x-[120%]');
+            }
+        }
+
+        // ============================================================================
+        // 8. RAYCASTING INTERACTION (CLICK ON HORSE TO PET & INSPECT ANATOMY)
+        // ============================================================================
+        function onPointerDown(e) {
+            pointerDownPos.x = e.clientX;
+            pointerDownPos.y = e.clientY;
+        }
+
+        function onPointerUp(e) {
+            const moveDist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+            if (moveDist > 6) return; // Ignore orbit drags
+
+            pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(pointer, camera);
+            const hits = raycaster.intersectObjects(InteractiveMeshes, false);
+
+            if (hits.length > 0) {
+                const hit = hits[0];
+                const zone = hit.object.userData.zone || 'Equine Coat';
+                simState.shakeTimer = 0.95;
+
+                // Visual ripple at click point
+                const ripple = document.createElement('div');
+                ripple.className = 'click-ripple';
+                ripple.style.left = (e.clientX - 16) + 'px';
+                ripple.style.top = (e.clientY - 16) + 'px';
+                document.body.appendChild(ripple);
+                setTimeout(() => ripple.remove(), 700);
+
+                showInteractionToast(`Petted: ${zone} — Friendly head nod!`);
+            }
+        }
+
+        let toastTimeout;
+        function showInteractionToast(message) {
+            const toast = document.getElementById('interaction-toast');
+            document.getElementById('toast-text').textContent = message;
+            toast.classList.remove('opacity-0', '-translate-y-2');
+            toast.classList.add('opacity-100', 'translate-y-0');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-2');
+                toast.classList.remove('opacity-100', 'translate-y-0');
+            }, 2600);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ============================================================================
+        // 9. MAIN RENDER LOOP
+        // ============================================================================
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1);
+
+            // FPS Counter
+            frameCount++;
+            if (clock.elapsedTime - lastFpsUpdate >= 0.5) {
+                const fps = Math.min(60, Math.round(frameCount / (clock.elapsedTime - lastFpsUpdate)));
+                document.getElementById('stat-fps').textContent = fps;
+                frameCount = 0;
+                lastFpsUpdate = clock.elapsedTime;
+            }
+
+            // Update Biomechanical Horse Rig & Environment
+            updateHorseBiometrics(dt);
+            updateEnvironmentEffects(dt);
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
